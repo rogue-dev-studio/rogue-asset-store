@@ -22,19 +22,17 @@
     var path = (location.pathname || "").toLowerCase();
     if (path.indexOf("/servers") !== -1) return href("servers/");
     if (path.indexOf("/skills") !== -1) return href("skills/");
-    if (path.indexOf("asset-store") === -1 && /(?:^|\/)assets(?:\/|$)/.test(path)) {
-      return href("assets/");
-    }
-    return href("assets/");
+    if (path.indexOf("/search") !== -1) return href("search/");
+    if (/(?:^|\/)assets(?:\/|$)/.test(path)) return href("assets/");
+    return href("search/");
   }
 
   function searchPlaceholderKey() {
     var path = (location.pathname || "").toLowerCase();
     if (path.indexOf("/servers") !== -1) return "searchServers";
     if (path.indexOf("/skills") !== -1) return "searchSkills";
-    if (path.indexOf("asset-store") === -1 && /(?:^|\/)assets(?:\/|$)/.test(path)) {
-      return "searchAssets";
-    }
+    if (path.indexOf("/search") !== -1) return "searchCatalog";
+    if (/(?:^|\/)assets(?:\/|$)/.test(path)) return "searchAssets";
     return "searchCatalog";
   }
 
@@ -358,6 +356,54 @@
     });
   }
 
+  function wireSearchClearButtons() {
+    function syncAll() {
+      document.querySelectorAll("[data-catalog-search], [data-site-search]").forEach(function (input) {
+        var wrap = input.closest(".site-header-search, .search-bar");
+        if (!wrap) return;
+        var btn = wrap.querySelector("[data-search-clear]");
+        if (!btn) return;
+        var hasValue = !!(input.value || "").length;
+        if (hasValue) btn.removeAttribute("hidden");
+        else btn.setAttribute("hidden", "");
+        wrap.classList.toggle("has-search-value", hasValue);
+      });
+    }
+
+    document.querySelectorAll("[data-catalog-search], [data-site-search]").forEach(function (input) {
+      var wrap = input.closest(".site-header-search, .search-bar");
+      if (!wrap) return;
+      var btn = wrap.querySelector("[data-search-clear]");
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "search-clear";
+        btn.setAttribute("data-search-clear", "");
+        btn.innerHTML =
+          '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+            '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/>' +
+          "</svg>";
+        input.insertAdjacentElement("afterend", btn);
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          input.value = "";
+          syncAll();
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.focus();
+        });
+      }
+      btn.setAttribute("aria-label", t("searchClear") || "Clear search");
+
+      if (input.getAttribute("data-search-clear-input") !== "1") {
+        input.setAttribute("data-search-clear-input", "1");
+        input.addEventListener("input", syncAll);
+        input.addEventListener("change", syncAll);
+      }
+    });
+    syncAll();
+  }
+
   var docChromeWired = false;
 
   function wireDropdowns() {
@@ -441,6 +487,7 @@
     injectNav();
     injectFooter();
     wireHeaderSearch();
+    wireSearchClearButtons();
     wireDropdowns();
     wireMobileNav();
     if (I18n) {

@@ -624,6 +624,7 @@
   function syncSearchInputs() {
     document.querySelectorAll("[data-catalog-search], [data-site-search]").forEach(function (input) {
       input.value = state.query;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
     });
   }
 
@@ -1032,22 +1033,41 @@
 
   function resultsMetaText(total, page, pages) {
     if (!total) return "0 results";
+    var start = (page - 1) * state.pageSize + 1;
+    var end = Math.min(total, page * state.pageSize);
+    return "Results " + start + " – " + end + " of " + total;
+  }
+
+  function resultsMetaHtml(total, page, pages) {
+    if (!total) return "0 results";
+    var start = (page - 1) * state.pageSize + 1;
+    var end = Math.min(total, page * state.pageSize);
     return (
-      "Page " +
-      page +
-      " of " +
-      pages +
-      " · " +
+      "Results <strong>" +
+      start +
+      " – " +
+      end +
+      "</strong> of <strong>" +
       total +
-      " result" +
-      (total === 1 ? "" : "s")
+      "</strong>"
     );
   }
 
   function updateFacetResultsMeta(total, page, pages) {
-    var meta = document.querySelector("[data-facet-results-meta]");
-    if (!meta) return;
-    meta.textContent = resultsMetaText(total, page, pages);
+    var text = resultsMetaText(total, page, pages);
+    var html = resultsMetaHtml(total, page, pages);
+    document.querySelectorAll("[data-facet-results-meta]").forEach(function (meta) {
+      if (meta.getAttribute("data-facet-results-html") === "1") meta.innerHTML = html;
+      else meta.textContent = text;
+    });
+    var viewBtn = document.querySelector("[data-mobile-filter-view]");
+    if (viewBtn) {
+      viewBtn.textContent = total
+        ? "VIEW RESULTS (" + total + ")"
+        : "VIEW RESULTS (0)";
+    }
+    refreshMobileActiveChips();
+    refreshMobileFilterCounts();
   }
 
   function renderPager(total, page, pages) {
@@ -2160,6 +2180,7 @@
 
   function refreshFilterChips() {
     var chipHost = document.querySelector("[data-catalog-chips]");
+    var mobileCatHost = document.querySelector("[data-mobile-filter-categories]");
     var tagHost = document.querySelector("[data-catalog-tags]");
     var useSidebar =
       filterStyle === "sidebar" ||
@@ -2168,20 +2189,21 @@
     var cats = catalogCategories();
     var tags = catalogTags();
 
-    if (chipHost) {
-      var tree = useSidebar ? taxonomyTree() : [];
-      if (useSidebar && tree.length) {
+    function renderSidebarTree(host) {
+      if (!host) return;
+      var tree = taxonomyTree();
+      if (tree.length) {
         normalizeFilterTags();
-        wireProductTree(chipHost);
-        chipHost.innerHTML = tree
+        wireProductTree(host);
+        host.innerHTML = tree
           .map(function (node) {
             return renderTreeNode(node, 0, node.label);
           })
           .join("");
-        applyTreeIndeterminate(chipHost);
-        wireFilterTooltips(chipHost);
-      } else if (useSidebar) {
-        chipHost.innerHTML = cats
+        applyTreeIndeterminate(host);
+        wireFilterTooltips(host);
+      } else {
+        host.innerHTML = cats
           .map(function (name) {
             var count = countForCategory(name);
             return (
@@ -2201,19 +2223,25 @@
             );
           })
           .join("");
-        syncChipActive(chipHost);
-        chipHost.querySelectorAll("[data-category]").forEach(function (btn) {
+        syncChipActive(host);
+        host.querySelectorAll("[data-category]").forEach(function (btn) {
           btn.addEventListener("click", function () {
             var name = btn.getAttribute("data-category") || "";
             if (isCategorySelected(name)) setSingleCategory("");
             else setSingleCategory(name);
             state.page = 1;
             syncUrl();
-            syncChipActive(chipHost);
+            syncChipActive(host);
             refreshFilterChips();
             render();
           });
         });
+      }
+    }
+
+    if (chipHost) {
+      if (useSidebar) {
+        renderSidebarTree(chipHost);
       } else if (useSoftChips) {
         chipHost.innerHTML =
           '<button type="button" class="chip-soft" data-category="">All categories (' + items.length + ")</button>" +
@@ -2256,12 +2284,14 @@
       }
     }
 
+    if (useSidebar && mobileCatHost) {
+      renderSidebarTree(mobileCatHost);
+    }
+
     if (tagHost) {
       if (useSidebar && taxonomyTree().length) {
         tagHost.innerHTML = "";
-        return;
-      }
-      if (useSidebar) {
+      } else if (useSidebar) {
         tagHost.innerHTML = tags
           .map(function (name) {
             var count = countForTag(name);
@@ -2279,6 +2309,18 @@
             );
           })
           .join("");
+        syncTagActive(tagHost);
+        tagHost.querySelectorAll("[data-tag]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var name = btn.getAttribute("data-tag") || "";
+            if (name && isTagSelected(name)) setSingleTag("");
+            else setSingleTag(name);
+            state.page = 1;
+            syncUrl();
+            syncTagActive(tagHost);
+            render();
+          });
+        });
       } else if (useSoftChips) {
         tagHost.innerHTML =
           '<button type="button" class="chip-soft chip-tag" data-tag="">All tags</button>' +
@@ -2287,6 +2329,17 @@
             return '<button type="button" class="chip-soft chip-tag" data-tag="' + name + '">' +
               name + " (" + count + ")</button>";
           }).join("");
+        syncTagActive(tagHost);
+        tagHost.querySelectorAll("[data-tag]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var name = btn.getAttribute("data-tag") || "";
+            setSingleTag(name);
+            state.page = 1;
+            syncUrl();
+            syncTagActive(tagHost);
+            render();
+          });
+        });
       } else {
         tagHost.innerHTML =
           '<button type="button" class="chip-browse chip-tag" data-tag="">ALL TAGS</button>' +
@@ -2294,20 +2347,18 @@
             return '<button type="button" class="chip-browse chip-tag" data-tag="' + name + '">' +
               name.toUpperCase() + "</button>";
           }).join("");
-      }
-
-      syncTagActive(tagHost);
-      tagHost.querySelectorAll("[data-tag]").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          var name = btn.getAttribute("data-tag") || "";
-          if (useSidebar && name && isTagSelected(name)) setSingleTag("");
-          else setSingleTag(name);
-          state.page = 1;
-          syncUrl();
-          syncTagActive(tagHost);
-          render();
+        syncTagActive(tagHost);
+        tagHost.querySelectorAll("[data-tag]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var name = btn.getAttribute("data-tag") || "";
+            setSingleTag(name);
+            state.page = 1;
+            syncUrl();
+            syncTagActive(tagHost);
+            render();
+          });
         });
-      });
+      }
     }
   }
 
@@ -2527,6 +2578,371 @@
     return ctl;
   }
 
+  function bucketLabel(buckets, id) {
+    for (var i = 0; i < buckets.length; i++) {
+      if (buckets[i].id === id) return buckets[i].label;
+    }
+    return id;
+  }
+
+  function activeFilterCount() {
+    return (
+      state.categories.length +
+      state.tags.length +
+      state.priceBuckets.length +
+      state.ratingBuckets.length +
+      state.releaseBuckets.length +
+      (state.sort && state.sort !== "relevance" ? 1 : 0)
+    );
+  }
+
+  function collectActiveFilterChips() {
+    var chips = [];
+    state.categories.forEach(function (name) {
+      chips.push({ type: "category", id: name, label: name });
+    });
+    state.tags.forEach(function (tag) {
+      var label = String(tag || "").replace(/^[^:]+:/, "").replace(/\|/g, " · ");
+      chips.push({ type: "tag", id: tag, label: label || tag });
+    });
+    state.priceBuckets.forEach(function (id) {
+      chips.push({ type: "price", id: id, label: bucketLabel(PRICE_BUCKETS, id) });
+    });
+    state.ratingBuckets.forEach(function (id) {
+      chips.push({ type: "rating", id: id, label: bucketLabel(RATING_BUCKETS, id) });
+    });
+    state.releaseBuckets.forEach(function (id) {
+      chips.push({ type: "release", id: id, label: bucketLabel(RELEASE_BUCKETS, id) });
+    });
+    return chips;
+  }
+
+  function removeActiveChip(type, id) {
+    if (type === "category") {
+      state.categories = state.categories.filter(function (c) {
+        return c !== id;
+      });
+    } else if (type === "tag") {
+      state.tags = state.tags.filter(function (t) {
+        return t !== id;
+      });
+    } else if (type === "price") {
+      state.priceBuckets = state.priceBuckets.filter(function (v) {
+        return v !== id;
+      });
+    } else if (type === "rating") {
+      state.ratingBuckets = state.ratingBuckets.filter(function (v) {
+        return v !== id;
+      });
+    } else if (type === "release") {
+      state.releaseBuckets = state.releaseBuckets.filter(function (v) {
+        return v !== id;
+      });
+    }
+    state.page = 1;
+    syncUrl();
+    refreshFilterChips();
+    render();
+  }
+
+  function refreshMobileActiveChips() {
+    var host = document.querySelector("[data-mobile-active-chips]");
+    if (!host) return;
+    var chips = collectActiveFilterChips();
+    if (!chips.length) {
+      host.innerHTML = "";
+      host.setAttribute("hidden", "");
+      return;
+    }
+    host.removeAttribute("hidden");
+    host.innerHTML =
+      chips
+        .map(function (chip) {
+          return (
+            '<button type="button" class="mobile-filter-chip" data-chip-type="' +
+            chip.type +
+            '" data-chip-id="' +
+            String(chip.id).replace(/"/g, "&quot;") +
+            '">' +
+            '<span>' +
+            chip.label +
+            "</span>" +
+            '<span class="mobile-filter-chip-x" aria-hidden="true">×</span>' +
+            "</button>"
+          );
+        })
+        .join("") +
+      '<button type="button" class="mobile-filter-clear-inline" data-mobile-clear-filters>Clear</button>';
+  }
+
+  function refreshMobileFilterCounts() {
+    var count = activeFilterCount();
+    document.querySelectorAll("[data-mobile-filter-count]").forEach(function (el) {
+      var key = el.getAttribute("data-mobile-filter-count");
+      var n = 0;
+      if (key === "categories") n = state.categories.length + state.tags.length;
+      else if (key === "price") n = state.priceBuckets.length;
+      else if (key === "rating") n = state.ratingBuckets.length;
+      else if (key === "release") n = state.releaseBuckets.length;
+      else if (key === "sort") n = state.sort && state.sort !== "relevance" ? 1 : 0;
+      else if (key === "all") n = count;
+      if (n > 0) {
+        el.textContent = " (" + n + ")";
+        el.removeAttribute("hidden");
+      } else {
+        el.textContent = "";
+        el.setAttribute("hidden", "");
+      }
+    });
+    var clearBtn = document.querySelector("[data-mobile-filter-clear]");
+    if (clearBtn) {
+      clearBtn.textContent = count > 0 ? "Clear (" + count + ")" : "Clear";
+      clearBtn.toggleAttribute("hidden", count === 0);
+    }
+  }
+
+  function refreshMobileBucketChecks() {
+    var sheet = document.querySelector("[data-mobile-filter-sheet]");
+    if (!sheet) return;
+    sheet.querySelectorAll("[data-mobile-bucket]").forEach(function (input) {
+      var group = input.getAttribute("data-mobile-bucket");
+      var id = input.value;
+      var on = false;
+      if (group === "price") on = state.priceBuckets.indexOf(id) !== -1;
+      else if (group === "rating") on = state.ratingBuckets.indexOf(id) !== -1;
+      else if (group === "release") on = state.releaseBuckets.indexOf(id) !== -1;
+      input.checked = on;
+    });
+    sheet.querySelectorAll("[data-mobile-sort-option]").forEach(function (btn) {
+      btn.classList.toggle(
+        "is-active",
+        btn.getAttribute("data-mobile-sort-option") === state.sort
+      );
+    });
+  }
+
+  function setMobileFilterSheetOpen(open) {
+    var sheet = document.querySelector("[data-mobile-filter-sheet]");
+    if (!sheet) return;
+    sheet.classList.toggle("is-open", open);
+    sheet.setAttribute("aria-hidden", open ? "false" : "true");
+    document.body.classList.toggle("mobile-filter-open", open);
+    if (open) {
+      refreshFilterChips();
+      refreshMobileBucketChecks();
+      refreshMobileFilterCounts();
+      var list = filteredItems();
+      updateFacetResultsMeta(
+        list.length,
+        state.page,
+        Math.max(1, Math.ceil(list.length / state.pageSize) || 1)
+      );
+    }
+  }
+
+  function wireMobileSortFilterChrome() {
+    if (!document.querySelector("[data-filter-layout='sidebar']")) return;
+    if (document.querySelector("[data-mobile-filter-sheet]")) return;
+
+    var host = document.querySelector("[data-browse-facets]");
+    if (!host) return;
+
+    var mobileBar = document.createElement("div");
+    mobileBar.className = "browse-mobile-filter";
+    mobileBar.setAttribute("data-mobile-filter-bar", "");
+    mobileBar.innerHTML =
+      '<p class="facet-results-meta" data-facet-results-meta data-facet-results-html="1"></p>' +
+      '<button type="button" class="mobile-sort-filter-btn" data-mobile-sort-filter-open>' +
+        '<svg class="mobile-sort-filter-icon" viewBox="0 0 24 24" aria-hidden="true" width="18" height="18">' +
+          '<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 7h16M7 12h10M10 17h4"/>' +
+          '<circle cx="9" cy="7" r="1.6" fill="currentColor" stroke="none"/>' +
+          '<circle cx="15" cy="12" r="1.6" fill="currentColor" stroke="none"/>' +
+          '<circle cx="12" cy="17" r="1.6" fill="currentColor" stroke="none"/>' +
+        "</svg>" +
+        "<span>SORT AND FILTER</span>" +
+      "</button>" +
+      '<div class="mobile-active-chips" data-mobile-active-chips hidden></div>';
+    host.appendChild(mobileBar);
+
+    function accordionSection(key, title, bodyHtml) {
+      return (
+        '<div class="mobile-filter-acc" data-mobile-acc="' +
+        key +
+        '">' +
+        '<button type="button" class="mobile-filter-acc-trigger" data-mobile-acc-trigger aria-expanded="false">' +
+          "<span>" +
+          title +
+          '<span data-mobile-filter-count="' +
+          key +
+          '" hidden></span></span>' +
+          '<svg class="mobile-filter-acc-chevron" viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5L6 6.5L11 1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>' +
+        "</button>" +
+        '<div class="mobile-filter-acc-panel" data-mobile-acc-panel hidden>' +
+          bodyHtml +
+        "</div>" +
+        "</div>"
+      );
+    }
+
+    function bucketChecks(group, buckets) {
+      return (
+        '<div class="mobile-filter-options">' +
+        buckets
+          .map(function (b) {
+            return (
+              '<label class="mobile-filter-option">' +
+              '<input type="checkbox" data-mobile-bucket="' +
+              group +
+              '" value="' +
+              b.id +
+              '" />' +
+              "<span>" +
+              b.label +
+              "</span>" +
+              "</label>"
+            );
+          })
+          .join("") +
+        "</div>"
+      );
+    }
+
+    var sortBody =
+      '<div class="mobile-filter-options">' +
+      SORT_OPTIONS.map(function (opt) {
+        return (
+          '<button type="button" class="mobile-filter-sort-option" data-mobile-sort-option="' +
+          opt.id +
+          '">' +
+          opt.label +
+          "</button>"
+        );
+      }).join("") +
+      "</div>";
+
+    var sheet = document.createElement("div");
+    sheet.className = "mobile-filter-sheet";
+    sheet.setAttribute("data-mobile-filter-sheet", "");
+    sheet.setAttribute("aria-hidden", "true");
+    sheet.innerHTML =
+      '<div class="mobile-filter-sheet-inner">' +
+        '<div class="mobile-filter-sheet-head">' +
+          '<button type="button" class="mobile-filter-sheet-close" data-mobile-filter-close aria-label="Close filters">' +
+            '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>' +
+          "</button>" +
+        "</div>" +
+        '<div class="mobile-filter-sheet-body">' +
+          accordionSection(
+            "categories",
+            "CATEGORIES",
+            '<div class="filter-tree mobile-filter-tree" data-mobile-filter-categories></div>'
+          ) +
+          accordionSection("price", "PRICE", bucketChecks("price", PRICE_BUCKETS)) +
+          accordionSection("rating", "RATING", bucketChecks("rating", RATING_BUCKETS)) +
+          accordionSection(
+            "release",
+            "RELEASE DATE",
+            bucketChecks("release", RELEASE_BUCKETS)
+          ) +
+          accordionSection("sort", "SORT BY", sortBody) +
+        "</div>" +
+        '<div class="mobile-filter-sheet-foot">' +
+          '<button type="button" class="mobile-filter-view-btn" data-mobile-filter-view>VIEW RESULTS (0)</button>' +
+          '<button type="button" class="mobile-filter-clear-btn" data-mobile-filter-clear hidden>Clear</button>' +
+        "</div>" +
+      "</div>";
+    document.body.appendChild(sheet);
+
+    mobileBar
+      .querySelector("[data-mobile-sort-filter-open]")
+      .addEventListener("click", function (e) {
+        e.preventDefault();
+        setMobileFilterSheetOpen(true);
+      });
+
+    sheet
+      .querySelector("[data-mobile-filter-close]")
+      .addEventListener("click", function () {
+        setMobileFilterSheetOpen(false);
+      });
+
+    sheet
+      .querySelector("[data-mobile-filter-view]")
+      .addEventListener("click", function () {
+        setMobileFilterSheetOpen(false);
+      });
+
+    sheet
+      .querySelector("[data-mobile-filter-clear]")
+      .addEventListener("click", function () {
+        clearAllFilters();
+        refreshMobileBucketChecks();
+        refreshMobileFilterCounts();
+      });
+
+    sheet.querySelectorAll("[data-mobile-acc-trigger]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var acc = btn.closest("[data-mobile-acc]");
+        if (!acc) return;
+        var panel = acc.querySelector("[data-mobile-acc-panel]");
+        var open = panel && panel.hidden;
+        if (panel) panel.hidden = !open;
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        acc.classList.toggle("is-open", open);
+      });
+    });
+
+    sheet.addEventListener("change", function (e) {
+      var input = e.target;
+      if (!input || !input.getAttribute || !input.getAttribute("data-mobile-bucket")) return;
+      var group = input.getAttribute("data-mobile-bucket");
+      var id = input.value;
+      if (group === "price") {
+        state.priceBuckets = toggleListValue(state.priceBuckets, id, input.checked);
+      } else if (group === "rating") {
+        state.ratingBuckets = toggleListValue(state.ratingBuckets, id, input.checked);
+      } else if (group === "release") {
+        state.releaseBuckets = toggleListValue(state.releaseBuckets, id, input.checked);
+      }
+      state.page = 1;
+      syncUrl();
+      render();
+    });
+
+    sheet.addEventListener("click", function (e) {
+      var sortBtn = e.target.closest("[data-mobile-sort-option]");
+      if (sortBtn) {
+        e.preventDefault();
+        state.sort = sortBtn.getAttribute("data-mobile-sort-option") || "relevance";
+        state.page = 1;
+        syncUrl();
+        refreshMobileBucketChecks();
+        render();
+        return;
+      }
+    });
+
+    mobileBar.addEventListener("click", function (e) {
+      var chip = e.target.closest("[data-chip-type]");
+      if (chip) {
+        e.preventDefault();
+        removeActiveChip(
+          chip.getAttribute("data-chip-type"),
+          chip.getAttribute("data-chip-id")
+        );
+        return;
+      }
+      if (e.target.closest("[data-mobile-clear-filters]")) {
+        e.preventDefault();
+        clearAllFilters();
+      }
+    });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") setMobileFilterSheetOpen(false);
+    });
+  }
+
   function wireBrowseFacets() {
     var host =
       document.querySelector("[data-browse-facets]") ||
@@ -2535,9 +2951,11 @@
     host.setAttribute("data-wired", "1");
     host.classList.add("browse-facet-row");
     host.innerHTML =
-      '<div class="browse-facet-left" data-facet-left></div>' +
-      '<div class="browse-facet-center"><p class="facet-results-meta" data-facet-results-meta></p></div>' +
-      '<div class="browse-facet-right" data-facet-right></div>';
+      '<div class="browse-facet-desktop">' +
+        '<div class="browse-facet-left" data-facet-left></div>' +
+        '<div class="browse-facet-center"><p class="facet-results-meta" data-facet-results-meta></p></div>' +
+        '<div class="browse-facet-right" data-facet-right></div>' +
+      "</div>";
 
     var left = host.querySelector("[data-facet-left]");
     var right = host.querySelector("[data-facet-right]");
@@ -2604,6 +3022,8 @@
 
     createSortDropdown(right);
     createPageSizeDropdown(right);
+
+    wireMobileSortFilterChrome();
 
     document.addEventListener("click", function () {
       closeAllFacets();
