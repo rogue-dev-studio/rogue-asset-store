@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://rogue-dev-studio.github.io/rogue-asset-store/sitemap.xml
